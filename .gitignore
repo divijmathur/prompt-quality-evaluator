@@ -1,0 +1,33 @@
+# Ignore environment and secrets
+.env
+
+# Ignore Python cache
+__pycache__/
+
+# Ignore databases and data files
+*.db
+*.csv
+
+# Ignore Jupyter notebook checkpoints
+notebooks/.ipynb_checkpoints/
+# Environment and API keys
+.env
+
+# Data and databases
+db/
+data/*.csv
+data/*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
