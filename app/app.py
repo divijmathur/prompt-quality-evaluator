@@ -2,54 +2,81 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from charts import bar_chart
-from layout import render_header
+import os
 from pathlib import Path
 
-# --- Connect to database ---
-conn = sqlite3.connect(Path("../db/evals.db"))
-df = pd.read_sql_query("SELECT * FROM evals", conn)
+from charts import bar_chart
+from layout import render_header
 
-# --- Clean and preprocess ---
-# Drop rows where all scores are None/NaN
+# ---- Resolve paths deterministically ----
+APP_DIR = Path(__file__).resolve().parent         # .../app
+ROOT_DIR = APP_DIR.parent                         # repo root
+DB_PATH = ROOT_DIR / "db" / "evals.db"            # .../db/evals.db
+
+# Optional: override via secrets (useful later)
+override = st.secrets.get("DB_PATH") if hasattr(st, "secrets") else None
+if override:
+    DB_PATH = Path(override)
+
+# ---- Debug: show what the cloud sees (remove later if you want) ----
+st.write("📁 CWD:", os.getcwd())
+st.write("📄 __file__:", __file__)
+st.write("🗂️ App dir contents:", [p.name for p in APP_DIR.iterdir()])
+if (ROOT_DIR / "db").exists():
+    st.write("🗂️ db dir contents:", [p.name for p in (ROOT_DIR / "db").iterdir()])
+
+# ---- Try to open SQLite DB in read-only mode; fallback to CSV ----
+df = None
+try:
+    if DB_PATH.exists():
+        # Read-only mode avoids write errors on Streamlit Cloud
+        uri = f"file:{DB_PATH.as_posix()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        df = pd.read_sql_query("SELECT * FROM evals", conn)
+    else:
+        st.warning(f"Database not found at: {DB_PATH}. Loading fallback CSV.")
+except Exception as e:
+    st.warning(f"Could not open SQLite DB ({DB_PATH}). Error: {e}\nLoading fallback CSV.")
+
+# ---- Fallback CSV (ship a tiny sample to app/example_data.csv) ----
+if df is None:
+    csv_fallback = APP_DIR / "example_data.csv"
+    if csv_fallback.exists():
+        df = pd.read_csv(csv_fallback)
+    else:
+        st.error("No DB and no fallback CSV found. Add db/evals.db or app/example_data.csv.")
+        st.stop()
+
+# ---- Clean & UI below ----
 df = df.dropna(subset=["clarity", "factuality", "style"], how="all")
-
-# Replace missing reason text with placeholders
 for col in ["clarity_reason", "factuality_reason", "style_reason"]:
     if col in df.columns:
         df[col] = df[col].fillna("No explanation available.")
+df["status"] = df.apply(lambda r: "✅ Scored" if pd.notnull(r.get("clarity")) else "⚠️ Missing", axis=1)
 
-# Add a quick quality status column
-df["status"] = df.apply(
-    lambda r: "✅ Scored" if pd.notnull(r["clarity"]) else "⚠️ Missing", axis=1
-)
-
-# --- Render header ---
 render_header()
 
-# --- Overview Metrics ---
 st.markdown("### 📊 Overall Summary")
-col1, col2, col3 = st.columns(3)
-col1.metric("Avg Clarity", round(df["clarity"].mean(), 2))
-col2.metric("Avg Factuality", round(df["factuality"].mean(), 2))
-col3.metric("Avg Style", round(df["style"].mean(), 2))
+c1, c2, c3 = st.columns(3)
+c1.metric("Avg Clarity", round(df["clarity"].mean(), 2) if "clarity" in df else "—")
+c2.metric("Avg Factuality", round(df["factuality"].mean(), 2) if "factuality" in df else "—")
+c3.metric("Avg Style", round(df["style"].mean(), 2) if "style" in df else "—")
 
-# --- Show full dataframe ---
+st.markdown("### 🧾 Full Evaluation Table")
 st.dataframe(df)
 
-# --- Bar chart visualization ---
+st.markdown("### 📈 Scores by Prompt")
 st.plotly_chart(bar_chart(df))
 
-# --- Reasons section ---
 st.subheader("💬 Reasons for Each Score")
-if all(col in df.columns for col in ["clarity_reason", "factuality_reason", "style_reason"]):
+if all(c in df.columns for c in ["clarity_reason", "factuality_reason", "style_reason"]):
     for _, row in df.iterrows():
-        # Defensive: skip rows that somehow have None in prompt
-        if pd.isna(row["prompt"]):
+        p = row.get("prompt")
+        if pd.isna(p): 
             continue
-        with st.expander(row["prompt"][:100] + "..."):
-            st.markdown(f"**Clarity ({int(row['clarity']) if pd.notna(row['clarity']) else '—'}):** {row['clarity_reason']}")
-            st.markdown(f"**Factuality ({int(row['factuality']) if pd.notna(row['factuality']) else '—'}):** {row['factuality_reason']}")
-            st.markdown(f"**Style ({int(row['style']) if pd.notna(row['style']) else '—'}):** {row['style_reason']}")
+        with st.expander(str(p)[:100] + "..."):
+            st.markdown(f"**Clarity ({row['clarity'] if 'clarity' in row else '—'}):** {row['clarity_reason']}")
+            st.markdown(f"**Factuality ({row['factuality'] if 'factuality' in row else '—'}):** {row['factuality_reason']}")
+            st.markdown(f"**Style ({row['style'] if 'style' in row else '—'}):** {row['style_reason']}")
 else:
-    st.info("⚠️ No explanation columns found. Re-run the evaluator with the updated rubric.")
+    st.info("⚠️ No explanation columns found. Re-run the evaluator with reasons.")
