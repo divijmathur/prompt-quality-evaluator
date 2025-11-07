@@ -5,8 +5,7 @@
 __pycache__/
 
 # Ignore databases and data files
-*.db
-*.csv
+
 
 # Ignore Jupyter notebook checkpoints
 notebooks/.ipynb_checkpoints/
